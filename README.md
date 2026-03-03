@@ -157,9 +157,8 @@ This project demonstrates:
 
 ## 👩‍💻 Author
 
-Nikitha
-AI & Robotics Enthusiast
-Robocon – AI & ROS Team Member
+Nikitha J
+
 
 ---
 
