@@ -34,7 +34,7 @@ User Upload → Text Extraction → Embedding Generation → Vector Storage (Chr
 * Flask
 * ChromaDB (Vector Database)
 * Google Gemini API
-* ONNX Runtime (for embeddings)
+
 
 ### 🔹 Frontend
 
