@@ -52,12 +52,12 @@ User Upload → Text Extraction → Embedding Generation → Vector Storage (Chr
 
 ## 🧠 Key Features
 
-* Resume Upload
+* Document Upload
 * Automatic Text Extraction
 * Vector Embedding Storage
 * Semantic Search
-* AI-based Resume Evaluation
-* Question Answering from Resume
+* AI-based Evaluation
+* Question Answering from Document
 * Summary Generation
 
 ---
