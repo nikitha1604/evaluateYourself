@@ -1,0 +1,23 @@
+# Python
+venv/
+.venv/
+venv312/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Node
+node_modules/
+dist/
+
+# Environment variables
+.env
+
+# Database
+*.sqlite3
+*.db
+
+# OS
+.DS_Store
+Thumbs.db
