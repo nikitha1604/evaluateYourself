@@ -1,12 +1,12 @@
-# 🚀 Evaluate Yourself – RAG Based AI Resume Analyzer
+# 🚀 Evaluate Yourself
 
 ## 📌 Project Overview
 
-**Evaluate Yourself** is a full-stack AI-powered Resume Analysis System built using a **Retrieval-Augmented Generation (RAG)** architecture.
+**Evaluate Yourself** is a full-stack AI-powered Analysis System built using a **Retrieval-Augmented Generation (RAG)** architecture.
 
 The system allows users to upload resumes and:
 
-* Extracts resume content
+* Extracts content
 * Stores embeddings in a vector database
 * Retrieves relevant context
 * Generates intelligent feedback using a Large Language Model
