@@ -542,8 +542,4 @@ If you find this project useful, consider giving the repository a ⭐ on GitHub.
 
 ---
 
-## 📄 License
 
-This project is intended for educational and portfolio purposes.
-
-Add an appropriate open-source license such as the **MIT License** if you plan to distribute the project publicly.
