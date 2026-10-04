@@ -2,46 +2,20 @@ import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import { spawn } from 'child_process';
-import fs from 'fs';
-import os from 'os';
-import path from 'path';
-import dotenv from 'dotenv';
 import { parsePdf } from './parsers/pdfp.js';
 import { parseDocx } from './parsers/docxp.js';
 import { parseImage } from './parsers/imagep.js';
-import { fileURLToPath } from 'url';
-
-dotenv.config();
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-function getPythonExecutable() {
-  const venvDir = path.resolve(__dirname, './venv312');
-  let pythonPath =
-    process.platform === 'win32'
-      ? path.join(venvDir, 'Scripts', 'python.exe')
-      : path.join(venvDir, 'bin', 'python');
-
-  if (!fs.existsSync(pythonPath)) {
-    console.warn('⚠️ venv Python not found, using system python');
-    pythonPath = 'python';
-  }
-
-  console.log("Using Python:", pythonPath);
-  return pythonPath;
-}
-
-const PYTHON_EXEC = getPythonExecutable();
 
 const app = express();
 const port = 8000;
 
-app.use(cors());
+app.use(cors({ origin: 'http://localhost:5173' }));
 app.use(express.json());
 
-const upload = multer({ storage: multer.memoryStorage() });
+const storage = multer.memoryStorage();
+const upload = multer({ storage: storage });
 
+// Helper to determine docType from the file's mimetype
 const getDocType = (mimetype) => {
   if (mimetype === 'application/pdf') return 'pdf';
   if (mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') return 'docx';
@@ -49,95 +23,172 @@ const getDocType = (mimetype) => {
   return null;
 };
 
-function writeTempText(text) {
-  const p = path.join(
-    os.tmpdir(),
-    `rag_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`
-  );
-  fs.writeFileSync(p, text, { encoding: 'utf-8' });
-  return p;
-}
-
-function runPython(args) {
-  console.log("Spawning Python:", PYTHON_EXEC, args);
-
+const runPythonScript = (args) => {
   return new Promise((resolve, reject) => {
-    const py = spawn(PYTHON_EXEC, ['main.py', ...args], {
-      cwd: path.resolve(__dirname)
-    });
+    const python = spawn('python', ['main.py', ...args]);
+    let stdout = '';
+    let stderr = '';
 
-    let out = '';
-    let err = '';
+    python.stdout.on('data', (data) => { stdout += data.toString(); });
+    python.stderr.on('data', (data) => { stderr += data.toString(); console.error(`Python stderr: ${data}`); });
 
-    py.stdout.on('data', (d) => (out += d.toString()));
-    py.stderr.on('data', (d) => (err += d.toString()));
-
-    py.on('close', (code) => {
-      console.log("Python exit code:", code);
-      console.log("STDOUT:", out);
-      console.log("STDERR:", err);
-
+    python.on('close', (code) => {
       if (code !== 0) {
-        return reject(new Error(err || `Python exited ${code}`));
+        return reject(new Error(`Python script failed with code ${code}. Stderr: ${stderr}`));
       }
-
       try {
-        const parsed = JSON.parse(out.trim());
-        if (parsed.success === false) {
-          return reject(new Error(parsed.error || "Python error"));
+        const result = JSON.parse(stdout);
+        if (result.success === false) { // Check for explicit false
+          return reject(new Error(`Python script returned an error: ${result.error}`));
         }
-        resolve(parsed);
+        resolve(result);
       } catch (e) {
-        reject(new Error("Invalid JSON from Python: " + out));
+        reject(new Error(`Failed to parse Python script output. Output: ${stdout}`));
       }
     });
   });
-}
+};
 
+// Renamed to /api/generate-quiz to match frontend and added robust docType detection
 app.post('/api/generate-quiz', upload.single('file'), async (req, res) => {
+  const { numQuestions, level } = req.body;
+  const file = req.file;
+
+  if (!file) {
+    return res.status(400).json({ error: 'No file uploaded.' });
+  }
+
+  const docType = getDocType(file.mimetype);
+  if (!docType) {
+    return res.status(400).json({ error: 'Unsupported file type.' });
+  }
+
+  console.log(`Received a '${docType}' file for quiz: ${file.originalname}`);
+  
   try {
-    const { numQuestions, level } = req.body;
-    const file = req.file;
-
-    if (!file) return res.status(400).json({ error: "No file uploaded" });
-
-    const docType = getDocType(file.mimetype);
-    if (!docType) return res.status(400).json({ error: "Unsupported file" });
-
     let text = '';
-    if (docType === 'pdf') text = await parsePdf(file.buffer);
-    else if (docType === 'docx') text = await parseDocx(file.buffer);
-    else text = await parseImage(file.buffer);
+    switch (docType) {
+      case 'pdf': text = await parsePdf(file.buffer); break;
+      case 'docx': text = await parseDocx(file.buffer); break;
+      case 'photo': text = await parseImage(file.buffer); break;
+    }
+    
+    console.log('Processing document...');
+    const processResult = await runPythonScript(['process', text, file.originalname, docType]);
+    const doc_id = processResult.doc_id;
+    console.log(`Document processed. Doc ID: ${doc_id}`);
 
-    const textPath = writeTempText(text);
+    console.log('Generating quiz...');
+    const quizResult = await runPythonScript(['generate_quiz', doc_id, numQuestions, level]);
+    console.log('Quiz generated.');
 
-    const proc = await runPython([
-      'process',
-      textPath,
-      file.originalname,
-      docType
-    ]);
+    res.status(200).json({ message: 'Quiz generated successfully!', quiz: quizResult.quiz });
 
-    const quiz = await runPython([
-      'generate_quiz',
-      proc.doc_id,
-      String(numQuestions || 5),
-      level || 'medium'
-    ]);
-
-    fs.unlink(textPath, () => {});
-
-    res.json({
-      message: "Quiz generated successfully!",
-      quiz: quiz.quiz
-    });
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
+  } catch (error) {
+    console.error('Processing error:', error.message);
+    res.status(500).json({ error: error.message || 'An unexpected error occurred.' });
   }
 });
 
-app.listen(port, () =>
-  console.log(`Server running at http://localhost:${port}`)
-);
+// New endpoint for summarization
+app.post('/api/summarize', upload.single('file'), async (req, res) => {
+  const { length } = req.body;
+  const file = req.file;
+
+  if (!file) {
+    return res.status(400).json({ error: 'No file uploaded.' });
+  }
+
+  const docType = getDocType(file.mimetype);
+  if (!docType) {
+    return res.status(400).json({ error: 'Unsupported file type.' });
+  }
+
+  console.log(`Received a '${docType}' file for summarization: ${file.originalname}`);
+
+  try {
+    let text = '';
+    switch (docType) {
+      case 'pdf': text = await parsePdf(file.buffer); break;
+      case 'docx': text = await parseDocx(file.buffer); break;
+      case 'photo': text = await parseImage(file.buffer); break;
+    }
+
+    console.log('Processing document for summarization...');
+    const processResult = await runPythonScript(['process', text, file.originalname, docType]);
+    const doc_id = processResult.doc_id;
+    console.log(`Document processed. Doc ID: ${doc_id}`);
+
+    console.log(`Generating ${length} summary...`);
+    const summaryResult = await runPythonScript(['summarize', doc_id, length]);
+    console.log('Summary generated.');
+
+    res.status(200).json({ message: 'Summary generated successfully!', content: summaryResult.summary.content });
+
+  } catch (error) {
+    console.error('Summarization error:', error.message);
+    res.status(500).json({ error: error.message || 'An unexpected error occurred.' });
+  }
+});
+
+// FIX: Create a dedicated endpoint to process a document and return its ID.
+// This is cleaner than piggybacking on the quiz/summary endpoints.
+app.post('/api/process-document', upload.single('file'), async (req, res) => {
+  const file = req.file;
+  if (!file) {
+    return res.status(400).json({ error: 'No file uploaded.' });
+  }
+
+  const docType = getDocType(file.mimetype);
+  if (!docType) {
+    return res.status(400).json({ error: 'Unsupported file type.' });
+  }
+
+  console.log(`Processing '${docType}' for Q&A: ${file.originalname}`);
+
+  try {
+    let text = '';
+    switch (docType) {
+      case 'pdf': text = await parsePdf(file.buffer); break;
+      case 'docx': text = await parseDocx(file.buffer); break;
+      case 'photo': text = await parseImage(file.buffer); break;
+    }
+
+    const result = await runPythonScript(['process', text, file.originalname, docType]);
+    console.log(`Document processed successfully. Doc ID: ${result.doc_id}`);
+    res.status(200).json({ doc_id: result.doc_id, fileName: file.originalname });
+
+  } catch (error) {
+    console.error('Error processing document:', error.message);
+    res.status(500).json({ error: error.message || 'Failed to process document.' });
+  }
+});
+
+// FIX: Create the new endpoint for handling Q&A.
+app.post('/api/ask-question', async (req, res) => {
+  const { doc_id, question, history } = req.body;
+
+  if (!doc_id || !question) {
+    return res.status(400).json({ error: 'doc_id and question are required.' });
+  }
+
+  try {
+    console.log(`Asking question for doc_id: ${doc_id}`);
+    // The history is stringified to be passed as a single command-line argument.
+    const historyString = JSON.stringify(history || []);
+    
+    const result = await runPythonScript(['ask_question', doc_id, question, historyString]);
+    
+    console.log('Answer generated successfully.');
+    res.status(200).json(result);
+
+  } catch (error) {
+    console.error('Error in /api/ask-question:', error.message);
+    res.status(500).json({ error: error.message || 'Failed to get answer.' });
+  }
+});
+
+
+app.listen(port, () => {
+  console.log(`Backend server is running on http://localhost:${port}`);
+});

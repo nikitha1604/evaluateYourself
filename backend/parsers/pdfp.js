@@ -1,9 +1,36 @@
-// backend/parsers/pdfp.js
-import pdf from "pdf-parse/lib/pdf-parse.js";
+import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 
-console.log(">>> Using pdfp.js from:", import.meta.url);
-
-export async function parsePdf(buffer) {
-  const data = await pdf(buffer);
-  return (data.text || "").trim();
-}
+export const parsePdf = async (buffer) => {
+  try {
+    // Load the PDF document from buffer
+    const loadingTask = getDocument({
+      data: new Uint8Array(buffer),
+      verbosity: 0, // Suppress console logs
+      useWorkerFetch: false, // Disable worker for Node.js
+      isEvalSupported: false, // Disable eval for security
+      useSystemFonts: false // Don't use system fonts
+    });
+    
+    const pdf = await loadingTask.promise;
+    let fullText = '';
+    
+    // Extract text from each page
+    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+      const page = await pdf.getPage(pageNum);
+      const textContent = await page.getTextContent();
+      
+      // Combine all text items from the page
+      const pageText = textContent.items
+        .map(item => item.str)
+        .join(' ');
+      
+      fullText += pageText + '\n\n';
+    }
+    
+    return fullText.trim();
+    
+  } catch (error) {
+    console.error('Error parsing PDF:', error);
+    throw new Error('Failed to parse PDF file.');
+  }
+};
